@@ -1,92 +1,82 @@
-/**
- * ===========================================
- * StudySpace ERP Backend - Main Entry Point
- * ===========================================
- *
- * This is the main entry point for the backend server.
- * It loads environment variables, establishes database connection,
- * and starts the Express server.
- *
- * @file index.js
- * @description Application entry point and server initialization
- */
-
-// Load environment variables first (before any other imports)
 require('dotenv').config();
 
-const bootstrap = require('./bootstrap');
-const { connectDB } = require('./DB/connection');
+const express = require('express');
+const cors = require('cors');
+const helmet = require('helmet');
+const mongoose = require('mongoose');
+const routerHandler = require('./router-handler');
+const { globalErrorHandler, notFoundHandler } = require('./src/Middlewares/error-handle.middleware');
 
-/**
- * Server port from environment or default to 5000
- * @type {number}
- */
-const PORT = process.env.PORT || 5000;
+const app = express();
 
-/**
- * Current environment (development, production, test)
- * @type {string}
- */
-const NODE_ENV = process.env.NODE_ENV || 'development';
+app.use(helmet());
 
-/**
- * Initialize and start the server
- *
- * This function:
- * 1. Connects to MongoDB database
- * 2. Initializes the Express application
- * 3. Starts listening for incoming requests
- *
- * @async
- * @function startServer
- * @returns {Promise<void>}
- */
-const startServer = async () => {
-  try {
-    // Step 1: Connect to MongoDB
-    // This must complete before starting the server
-    await connectDB();
-
-    // Step 2: Initialize Express application with all middleware and routes
-    const app = bootstrap();
-
-    // Step 3: Start the HTTP server
-    app.listen(PORT, () => {
-      console.log('===========================================');
-      console.log('🚀 StudySpace ERP Backend Server');
-      console.log('===========================================');
-      console.log(`📍 Environment: ${NODE_ENV}`);
-      console.log(`🔗 URL: http://localhost:${PORT}`);
-      console.log(`📅 Started: ${new Date().toISOString()}`);
-      console.log('===========================================');
-    });
-
-  } catch (error) {
-    // Log the error and exit if server fails to start
-    console.error('❌ Failed to start server:', error.message);
-    process.exit(1);
-  }
+const corsOptions = {
+  origin: process.env.FRONTEND_URL || '*',
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+  maxAge: 86400
 };
+app.use(cors(corsOptions));
 
-/**
- * Handle unhandled promise rejections
- * This prevents the application from silently failing
- */
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
-  // Exit with failure code after logging
-  process.exit(1);
+app.use(express.json({ limit: '10kb' }));
+app.use(express.urlencoded({ extended: true, limit: '10kb' }));
+
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    status: 'ok',
+    message: 'StudySpace ERP Backend is running',
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV
+  });
 });
 
-/**
- * Handle uncaught exceptions
- * This catches synchronous errors that were not caught
- */
-process.on('uncaughtException', (error) => {
-  console.error('❌ Uncaught Exception:', error.message);
-  // Exit with failure code after logging
-  process.exit(1);
+app.use('/api', routerHandler());
+
+app.use(notFoundHandler);
+app.use(globalErrorHandler);
+
+let cachedDb = null;
+
+async function connectDB() {
+  if (cachedDb) return cachedDb;
+  const mongoURI = process.env.MONGODB_URI;
+  if (!mongoURI) {
+    console.error('MONGODB_URI is not defined');
+    return null;
+  }
+  try {
+    await mongoose.connect(mongoURI, {
+      maxPoolSize: 10,
+      minPoolSize: 2,
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000
+    });
+    cachedDb = mongoose.connection;
+    console.log('MongoDB connected successfully');
+  } catch (error) {
+    console.error('MongoDB connection failed:', error.message);
+  }
+  return cachedDb;
+}
+
+app.use(async (req, res, next) => {
+  try {
+    req.db = await connectDB();
+    next();
+  } catch (error) {
+    next(error);
+  }
 });
 
-// Start the server
-startServer();
+if (process.env.NODE_ENV !== 'production') {
+  const PORT = process.env.PORT || 5000;
+  connectDB().then(() => {
+    app.listen(PORT, () => {
+      console.log(`Server running on http://localhost:${PORT}`);
+    });
+  });
+}
+
+module.exports = app;

@@ -61,7 +61,7 @@ const connectDB = async () => {
   // Validate that MongoDB URI is provided
   if (!mongoURI) {
     console.error('❌ MONGODB_URI is not defined in environment variables');
-    process.exit(1);
+    throw new Error('MONGODB_URI is not defined in environment variables');
   }
 
   try {
@@ -109,7 +109,7 @@ const connectDB = async () => {
 
     // All retries exhausted
     console.error(`❌ Failed to connect after ${MAX_RETRIES} attempts`);
-    process.exit(1);
+    throw new Error(`Failed to connect after ${MAX_RETRIES} attempts`);
   }
 };
 
