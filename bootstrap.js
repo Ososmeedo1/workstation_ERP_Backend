@@ -23,6 +23,8 @@ const cors = require('cors');
 const helmet = require('helmet');
 const routerHandler = require('./router-handler');
 const { globalErrorHandler, notFoundHandler } = require('./src/Middlewares/error-handle.middleware');
+const { createCorsOptions } = require('./src/Config/cors.config');
+const { isDevelopment, isProduction } = require('./src/Utils/environment.utils');
 
 /**
  * Bootstrap and configure the Express application
@@ -63,29 +65,7 @@ const bootstrap = () => {
    * Configure Cross-Origin Resource Sharing
    * Allows frontend to make requests to this API
    */
-  const corsOptions = {
-    // Allow requests from frontend URL (from environment)
-    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
-
-    // Allow credentials (cookies, authorization headers)
-    credentials: true,
-
-    // Allowed HTTP methods
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-
-    // Allowed headers
-    allowedHeaders: [
-      'Content-Type',
-      'Authorization',
-      'X-Requested-With',
-      'Accept'
-    ],
-
-    // Cache preflight requests for 24 hours
-    maxAge: 86400
-  };
-
-  app.use(cors(corsOptions));
+  app.use(cors(createCorsOptions()));
 
   // ===========================================
   // Body Parsing Middleware
@@ -107,7 +87,7 @@ const bootstrap = () => {
   // Request Logging (Development Only)
   // ===========================================
 
-  if (process.env.NODE_ENV === 'development') {
+  if (isDevelopment()) {
     /**
      * Simple request logger for development
      * Logs: METHOD URL - timestamp
@@ -131,7 +111,7 @@ const bootstrap = () => {
       status: 'ok',
       message: 'StudySpace ERP Backend is running',
       timestamp: new Date().toISOString(),
-      environment: process.env.NODE_ENV
+      environment: isProduction() ? 'production' : (process.env.NODE_ENV || 'development')
     });
   });
 

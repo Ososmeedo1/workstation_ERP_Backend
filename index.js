@@ -6,38 +6,54 @@ const helmet = require('helmet');
 const mongoose = require('mongoose');
 const routerHandler = require('./router-handler');
 const { globalErrorHandler, notFoundHandler } = require('./src/Middlewares/error-handle.middleware');
+const { createCorsOptions } = require('./src/Config/cors.config');
+const { isProduction } = require('./src/Utils/environment.utils');
 
 const app = express();
+const IS_PRODUCTION = isProduction();
 
-let cachedDb = null;
+let dbConnectionPromise = null;
 
 async function connectDB() {
-  if (cachedDb) return cachedDb;
-  const mongoURI = process.env.MONGODB_URI;
-  if (!mongoURI) {
-    throw new Error('MONGODB_URI is not defined');
+  // Reuse an established connection when the serverless instance is warm.
+  if (mongoose.connection.readyState === 1) {
+    return mongoose.connection;
   }
-  await mongoose.connect(mongoURI, {
-    maxPoolSize: 10,
-    minPoolSize: 2,
-    serverSelectionTimeoutMS: 5000,
-    socketTimeoutMS: 45000
-  });
-  cachedDb = mongoose.connection;
-  console.log('MongoDB connected successfully');
-  return cachedDb;
+
+  // Cache the connection promise so concurrent cold-start requests do not
+  // each open a separate MongoDB connection.
+  if (!dbConnectionPromise) {
+    const mongoURI = process.env.MONGODB_URI;
+    if (!mongoURI) {
+      throw new Error('MONGODB_URI is not defined');
+    }
+
+    dbConnectionPromise = mongoose.connect(mongoURI, {
+      maxPoolSize: 10,
+      minPoolSize: 2,
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000
+    })
+      .then(() => {
+        console.log('MongoDB connected successfully');
+        return mongoose.connection;
+      })
+      .catch((error) => {
+        // Allow the next request to retry after a transient failure.
+        dbConnectionPromise = null;
+        throw error;
+      });
+  }
+
+  return dbConnectionPromise;
 }
 
-app.use(helmet());
+mongoose.connection.on('disconnected', () => {
+  dbConnectionPromise = null;
+});
 
-const corsOptions = {
-  origin: true,
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
-  maxAge: 86400
-};
-app.use(cors(corsOptions));
+app.use(helmet());
+app.use(cors(createCorsOptions()));
 
 app.use(express.json({ limit: '10kb' }));
 app.use(express.urlencoded({ extended: true, limit: '10kb' }));
@@ -51,7 +67,7 @@ app.use(async (req, res, next) => {
     res.status(503).json({
       status: 'error',
       message: 'Database connection failed. Please check MONGODB_URI and network access.',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error: IS_PRODUCTION ? undefined : error.message
     });
   }
 });
@@ -61,7 +77,7 @@ app.get('/health', (req, res) => {
     status: 'ok',
     message: 'StudySpace ERP Backend is running',
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV
+    environment: IS_PRODUCTION ? 'production' : (process.env.NODE_ENV || 'development')
   });
 });
 
@@ -70,7 +86,9 @@ app.use('/api', routerHandler());
 app.use(notFoundHandler);
 app.use(globalErrorHandler);
 
-if (process.env.NODE_ENV !== 'production') {
+// Vercel imports this module as a handler; only start a listener when the
+// file is executed directly (local `npm start` / `npm run dev`).
+if (require.main === module && process.env.VERCEL !== '1') {
   const PORT = process.env.PORT || 5000;
   connectDB().then(() => {
     app.listen(PORT, () => {

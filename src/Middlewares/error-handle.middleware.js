@@ -17,6 +17,7 @@
  */
 
 const { AppError } = require('../Utils/error-class.utils');
+const { isDevelopment } = require('../Utils/environment.utils');
 
 /**
  * Handle Mongoose CastError (invalid ObjectId)
@@ -143,10 +144,9 @@ const globalErrorHandler = (err, req, res, next) => {
   err.statusCode = err.statusCode || 500;
   err.status = err.status || 'error';
 
-  // Determine environment
-  const isDevelopment = process.env.NODE_ENV === 'development';
-
-  if (isDevelopment) {
+  // Determine environment. Vercel sets VERCEL=1 even when NODE_ENV is unset
+  // or incorrectly left as "development".
+  if (isDevelopment()) {
     // Development: send full error details
     sendErrorDev(err, res);
   } else {
